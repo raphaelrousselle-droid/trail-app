@@ -4,7 +4,6 @@ import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
 
 export const profilesRouter = Router();
 
-// Récupère (ou signale l'absence de) profil de l'utilisateur connecté
 profilesRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
   const { data, error } = await supabaseAdmin
     .from("profiles")
@@ -15,7 +14,6 @@ profilesRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
   res.json(data);
 });
 
-// Crée ou met à jour le profil (upsert simple)
 profilesRouter.put("/me", requireAuth, async (req: AuthedRequest, res) => {
   const {
     preferred_run_days,
@@ -23,6 +21,8 @@ profilesRouter.put("/me", requireAuth, async (req: AuthedRequest, res) => {
     home_strength_sessions_per_week,
     current_longest_run_km,
     injury_flags,
+    age_years,
+    resting_hr_bpm,
   } = req.body;
 
   const { data, error } = await supabaseAdmin
@@ -35,6 +35,8 @@ profilesRouter.put("/me", requireAuth, async (req: AuthedRequest, res) => {
         home_strength_sessions_per_week: home_strength_sessions_per_week ?? 1,
         current_longest_run_km: current_longest_run_km ?? 0,
         injury_flags: injury_flags ?? [],
+        age_years: age_years ?? null,
+        resting_hr_bpm: resting_hr_bpm ?? null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" }

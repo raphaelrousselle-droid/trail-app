@@ -2,15 +2,8 @@
  * planGenerator.ts
  * -----------------
  * Construit un plan d'entraînement (training_weeks + workouts) à partir :
- *  - du profil du coureur (profiles)
+ *  - du profil du coureur (profiles), y compris âge et FC repos pour les zones cardio
  *  - de son objectif de course (race_goals)
- *
- * C'est un générateur basé sur des règles (heuristiques d'entraînement trail
- * classiques : périodisation en 4 phases, montée progressive du volume et du
- * dénivelé, rotation des types de séances). Ce n'est pas du machine learning,
- * et ce n'est pas non plus un avis médical — c'est un point de départ solide
- * que l'algorithme d'adaptation (adaptationEngine.ts) ajuste ensuite avec le
- * temps, séance après séance.
  */
 
 export type Phase = "base" | "development" | "specific" | "taper";
@@ -20,14 +13,16 @@ export interface ProfileInput {
   home_strength_sessions_per_week: number;
   current_longest_run_km: number;
   injury_flags: string[];
+  age_years?: number | null;
+  resting_hr_bpm?: number | null;
 }
 
 export interface RaceGoalInput {
   id: string;
-  race_date: string; // ISO date
+  race_date: string;
   distance_km: number;
   elevation_gain_m: number;
-  terrain_technicality: number; // 1-5
+  terrain_technicality: number;
 }
 
 export interface GeneratedWeek {
@@ -41,22 +36,14 @@ export interface GeneratedWeek {
 }
 
 export interface GeneratedWorkout {
-  type:
-    | "easy"
-    | "interval"
-    | "hills"
-    | "tempo"
-    | "technical"
-    | "strength"
-    | "long"
-    | "rest";
+  type: "easy" | "interval" | "hills" | "tempo" | "technical" | "strength" | "long" | "rest";
   title: string;
   target_duration_min: number | null;
   target_distance_km: number | null;
   target_elevation_gain_m: number | null;
   target_rpe: number | null;
   instructions_json: Record<string, unknown>;
-  scheduled_date: string; // ISO date
+  scheduled_date: string;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -70,9 +57,38 @@ function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 function mondayOnOrBefore(d: Date): Date {
-  const day = d.getDay(); // 0 = dimanche
-  const diff = (day + 6) % 7; // jours depuis lundi
+  const day = d.getDay();
+  const diff = (day + 6) % 7;
   return addDays(d, -diff);
+}
+
+// ---------- Zones cardio (Karvonen, formule de Tanaka pour la FC max) ----------
+interface HrZones {
+  z1: [number, number];
+  z2: [number, number];
+  z3: [number, number];
+  z4: [number, number];
+  z5: [number, number];
+}
+
+function computeHrZones(ageYears: number, restingHr: number): HrZones {
+  const hrMax = Math.round(208 - 0.7 * ageYears);
+  const hrr = hrMax - restingHr;
+  const z = (low: number, high: number): [number, number] => [
+    Math.round(restingHr + hrr * low),
+    Math.round(restingHr + hrr * high),
+  ];
+  return {
+    z1: z(0.5, 0.6),
+    z2: z(0.6, 0.7),
+    z3: z(0.7, 0.8),
+    z4: z(0.8, 0.9),
+    z5: z(0.9, 1.0),
+  };
+}
+
+function zoneLabel(range: [number, number], name: string): string {
+  return `${name} : ${range[0]}-${range[1]} bpm (ne dépasse pas ${range[1]})`;
 }
 
 function phaseForWeekIndex(weekNum: number, totalWeeks: number): Phase {
@@ -92,33 +108,19 @@ function isRecoveryWeek(weekNum: number, phase: Phase): boolean {
   return phase !== "taper" && weekNum % 4 === 0;
 }
 
-/**
- * Distance de la sortie longue, en km, pour une semaine donnée.
- * Part du niveau actuel du coureur, monte progressivement vers une distance
- * de pic cohérente avec l'objectif (distance de course + marge de sécurité),
- * puis redescend en taper.
- */
-function longRunKm(
-  weekNum: number,
-  totalWeeks: number,
-  phase: Phase,
-  startKm: number,
-  raceKm: number
-): number {
-  const peakKm = Math.max(startKm + 4, raceKm * 1.4); // marge au-dessus de la distance de course
+function longRunKm(weekNum: number, totalWeeks: number, phase: Phase, startKm: number, raceKm: number): number {
+  const peakKm = Math.max(startKm + 4, raceKm * 1.4);
   const taperWeeks = Math.min(3, Math.max(2, Math.round(totalWeeks * 0.07)));
   const peakWeek = totalWeeks - taperWeeks - 1;
 
   let km: number;
   if (weekNum >= peakWeek) {
-    // taper : redescend vers ~60% du pic, puis très léger la dernière semaine
     const weeksIntoTaper = weekNum - peakWeek;
     km = peakWeek === weekNum ? peakKm : peakKm * Math.max(0.35, 1 - weeksIntoTaper * 0.35);
   } else {
     const progress = weekNum / peakWeek;
     km = startKm + (peakKm - startKm) * progress;
   }
-
   if (isRecoveryWeek(weekNum, phase)) km *= 0.78;
   return Math.round(km * 2) / 2;
 }
@@ -134,7 +136,8 @@ function qualityWorkout(
   weekNum: number,
   phase: Phase,
   raceGoal: RaceGoalInput,
-  scheduledDate: string
+  scheduledDate: string,
+  hr: HrZones
 ): GeneratedWorkout {
   const includeTechnical = phase === "specific" && raceGoal.terrain_technicality >= 3;
   const cycleLen = includeTechnical ? 4 : 3;
@@ -150,6 +153,7 @@ function qualityWorkout(
       target_rpe: 3,
       instructions_json: {
         description: "Course très facile avec 4-5 accélérations courtes de 20 secondes.",
+        hr_zone: zoneLabel(hr.z2, "Z1-Z2"),
       },
       scheduled_date: scheduledDate,
     };
@@ -170,12 +174,15 @@ function qualityWorkout(
         work_min: weekNum <= 10 ? 2 : 3,
         recovery_min: weekNum <= 10 ? 2 : 3,
         cooldown_min: 10,
+        hr_zone_effort: zoneLabel(hr.z5, "Z4-Z5 (effort)"),
+        hr_zone_recovery: zoneLabel(hr.z1, "Z1 (récupération)"),
       },
       scheduled_date: scheduledDate,
     };
   }
   if (cycle === 1) {
     const reps = Math.min(12, 6 + Math.floor(weekNum / 5));
+    const climbSec = phase === "specific" ? 75 : 50;
     return {
       type: "hills",
       title: "Séance de côtes",
@@ -186,7 +193,10 @@ function qualityWorkout(
       instructions_json: {
         warmup_min: 15,
         reps,
-        climb_duration_sec: phase === "specific" ? 75 : 50,
+        climb_duration_sec: climbSec,
+        elevation_per_climb_m: Math.round(15),
+        hr_zone_climb: zoneLabel(hr.z4, "Z4 (en montée)"),
+        hr_zone_recovery: zoneLabel(hr.z2, "Z1-Z2 (en descente)"),
       },
       scheduled_date: scheduledDate,
     };
@@ -200,11 +210,15 @@ function qualityWorkout(
       target_distance_km: null,
       target_elevation_gain_m: 0,
       target_rpe: 7,
-      instructions_json: { warmup_min: 15, tempo_min: durationMin, cooldown_min: 10 },
+      instructions_json: {
+        warmup_min: 15,
+        tempo_min: durationMin,
+        cooldown_min: 10,
+        hr_zone: zoneLabel(hr.z3, "Z3"),
+      },
       scheduled_date: scheduledDate,
     };
   }
-  // technique (uniquement phase "specific")
   return {
     type: "technical",
     title: "Terrain technique",
@@ -212,7 +226,10 @@ function qualityWorkout(
     target_distance_km: shortRunKm(weekNum, phase, 8),
     target_elevation_gain_m: Math.round(raceGoal.elevation_gain_m / 10),
     target_rpe: 6,
-    instructions_json: { focus: "appuis et descentes techniques" },
+    instructions_json: {
+      focus: "appuis et descentes techniques",
+      hr_zone: `Z2-Z3 : ${hr.z2[0]}-${hr.z3[1]} bpm, variable selon le terrain — ici la technique compte plus que le chiffre`,
+    },
     scheduled_date: scheduledDate,
   };
 }
@@ -223,11 +240,9 @@ export function generatePlan(
   startDate: Date = mondayOnOrBefore(addDays(new Date(), 7))
 ): GeneratedWeek[] {
   const raceDate = new Date(raceGoal.race_date);
-  const totalWeeks = Math.max(
-    4,
-    Math.floor((raceDate.getTime() - startDate.getTime()) / (7 * DAY_MS))
-  );
+  const totalWeeks = Math.max(4, Math.floor((raceDate.getTime() - startDate.getTime()) / (7 * DAY_MS)));
   const startKm = Math.max(3, profile.current_longest_run_km);
+  const hr = computeHrZones(profile.age_years ?? 35, profile.resting_hr_bpm ?? 65);
 
   const weeks: GeneratedWeek[] = [];
 
@@ -241,10 +256,8 @@ export function generatePlan(
 
     const workouts: GeneratedWorkout[] = [];
 
-    // Séance qualité (mardi)
-    workouts.push(qualityWorkout(weekNum, phase, raceGoal, toISODate(addDays(monday, 1))));
+    workouts.push(qualityWorkout(weekNum, phase, raceGoal, toISODate(addDays(monday, 1)), hr));
 
-    // Renforcement (jeudi) — sauté si le profil n'en veut pas
     if (profile.home_strength_sessions_per_week > 0) {
       workouts.push({
         type: "strength",
@@ -262,7 +275,6 @@ export function generatePlan(
       });
     }
 
-    // Footing endurance (samedi) — seulement si le coureur court 3x/semaine ou plus
     if (profile.runs_per_week >= 3) {
       workouts.push({
         type: "easy",
@@ -271,23 +283,24 @@ export function generatePlan(
         target_distance_km: shortKm,
         target_elevation_gain_m: 0,
         target_rpe: 4,
-        instructions_json: { zone: "endurance fondamentale" },
+        instructions_json: { hr_zone: zoneLabel(hr.z2, "Z2") },
         scheduled_date: toISODate(addDays(monday, 5)),
       });
     }
 
-    // Sortie longue (dimanche)
     const isSimulation = phase === "specific" && weekNum === totalWeeks - 3;
+    const longElevation = Math.round((longKm / raceGoal.distance_km) * raceGoal.elevation_gain_m * 0.5);
     workouts.push({
       type: "long",
       title: isSimulation ? "Simulation course" : "Sortie longue",
       target_duration_min: null,
       target_distance_km: longKm,
-      target_elevation_gain_m: Math.round(
-        (longKm / raceGoal.distance_km) * raceGoal.elevation_gain_m * 0.5
-      ),
+      target_elevation_gain_m: longElevation,
       target_rpe: isSimulation ? 6 : 5,
-      instructions_json: { terrain: "aussi proche que possible du parcours cible" },
+      instructions_json: {
+        terrain: "aussi proche que possible du parcours cible",
+        hr_zone: `Z2 : ${hr.z2[0]}-${hr.z2[1]} bpm, dérive possible en Z3 (jusqu'à ${hr.z3[1]}) dans les montées`,
+      },
       scheduled_date: toISODate(addDays(monday, 6)),
     });
 
@@ -295,13 +308,8 @@ export function generatePlan(
       week_number: weekNum,
       phase,
       target_duration_min: workouts.reduce((s, w) => s + (w.target_duration_min ?? 0), 0),
-      target_distance_km: Math.round(
-        workouts.reduce((s, w) => s + (w.target_distance_km ?? 0), 0) * 2
-      ) / 2,
-      target_elevation_gain_m: workouts.reduce(
-        (s, w) => s + (w.target_elevation_gain_m ?? 0),
-        0
-      ),
+      target_distance_km: Math.round(workouts.reduce((s, w) => s + (w.target_distance_km ?? 0), 0) * 2) / 2,
+      target_elevation_gain_m: workouts.reduce((s, w) => s + (w.target_elevation_gain_m ?? 0), 0),
       recovery_week: recovery,
       workouts,
     });

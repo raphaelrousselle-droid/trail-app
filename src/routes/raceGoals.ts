@@ -65,12 +65,14 @@ raceGoalsRouter.post("/:id/generate-plan", requireAuth, async (req: AuthedReques
     return res.status(400).json({ error: "Profil manquant : complète ton profil avant de générer un plan." });
   }
 
-  const weeks = generatePlan(
+   const weeks = generatePlan(
     {
       runs_per_week: profile.runs_per_week,
       home_strength_sessions_per_week: profile.home_strength_sessions_per_week,
       current_longest_run_km: profile.current_longest_run_km,
       injury_flags: profile.injury_flags,
+      age_years: profile.age_years,
+      resting_hr_bpm: profile.resting_hr_bpm,
     },
     {
       id: raceGoal.id,

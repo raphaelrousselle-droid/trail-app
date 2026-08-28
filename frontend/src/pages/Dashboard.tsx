@@ -9,6 +9,7 @@ interface Workout {
   target_distance_km: number | null;
   target_elevation_gain_m: number | null;
   target_rpe: number | null;
+  instructions_json: Record<string, unknown>;
   scheduled_date: string;
   completion_status: string;
 }
@@ -18,6 +19,38 @@ interface WeekData {
   phase: string;
   recovery_week: boolean;
   workouts: Workout[];
+}
+
+const LABELS: Record<string, string> = {
+  warmup_min: "Échauffement (min)",
+  reps: "Répétitions",
+  work_min: "Effort (min)",
+  recovery_min: "Récupération (min)",
+  cooldown_min: "Retour au calme (min)",
+  climb_duration_sec: "Durée de chaque montée (sec)",
+  elevation_per_climb_m: "Dénivelé par montée (m)",
+  tempo_min: "Durée à allure tempo (min)",
+  hr_zone: "Zone cardio",
+  hr_zone_effort: "Zone cardio (effort)",
+  hr_zone_recovery: "Zone cardio (récupération)",
+  hr_zone_climb: "Zone cardio (montée)",
+  focus: "Focus",
+  terrain: "Terrain",
+  description: "Détail",
+};
+
+function InstructionLines({ instructions }: { instructions: Record<string, unknown> }) {
+  const entries = Object.entries(instructions).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (entries.length === 0) return null;
+  return (
+    <ul style={{ margin: "6px 0", paddingLeft: 18, fontSize: 13, color: "#444" }}>
+      {entries.map(([key, value]) => (
+        <li key={key}>
+          <strong>{LABELS[key] || key}:</strong> {String(value)}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export default function Dashboard() {
@@ -62,13 +95,17 @@ export default function Dashboard() {
     if (result.adaptation?.actions?.length) {
       alert("Plan ajusté :\n" + result.adaptation.actions.join("\n"));
     }
-    // recharge la semaine pour refléter d'éventuels ajustements
     window.location.reload();
   }
 
   if (loading) return <p>Chargement…</p>;
   if (error) return <p style={{ color: "crimson" }}>{error} (es-tu connecté ?)</p>;
-  if (raceGoals.length === 0) return <p>Aucun objectif de course pour l'instant. Crée-en un via l'API pour commencer.</p>;
+  if (raceGoals.length === 0) return (
+    <div>
+      <p>Aucun objectif de course pour l'instant.</p>
+      <a href="/onboarding"><button>Créer mon premier plan</button></a>
+    </div>
+  );
   if (!week) return <p>Pas encore de plan généré pour cet objectif.</p>;
 
   return (
@@ -81,10 +118,15 @@ export default function Dashboard() {
         <div key={w.id} style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12, marginBottom: 10 }}>
           <div style={{ fontWeight: 600 }}>{w.title}</div>
           <div style={{ fontSize: 13, color: "#666" }}>
-            {w.scheduled_date} · {w.target_distance_km ? `${w.target_distance_km} km · ` : ""}
-            {w.target_duration_min ? `${w.target_duration_min} min · ` : ""}
-            statut : {w.completion_status}
+            {w.scheduled_date}
+            {w.target_distance_km ? ` · ${w.target_distance_km} km` : ""}
+            {w.target_duration_min ? ` · ${w.target_duration_min} min` : ""}
+            {w.target_elevation_gain_m ? ` · D+ ${w.target_elevation_gain_m} m` : ""}
+            {w.target_rpe ? ` · Effort visé ${w.target_rpe}/10` : ""}
+            {" · statut : " + w.completion_status}
           </div>
+
+          <InstructionLines instructions={w.instructions_json} />
 
           {w.completion_status === "planned" && loggingId !== w.id && (
             <button onClick={() => setLoggingId(w.id)} style={{ marginTop: 8 }}>
