@@ -15,23 +15,50 @@ export default function Login() {
   }
 
   if (sent) {
-    return <p>Un lien de connexion a été envoyé à {email}. Ouvre-le pour continuer.</p>;
+    return (
+      <div className="auth">
+        <div className="card auth__card auth__card--center">
+          <div className="auth__icon" aria-hidden="true">📬</div>
+          <h1 className="page-title">Vérifie ta boîte mail</h1>
+          <p className="muted">
+            Un lien de connexion a été envoyé à <strong>{email}</strong>. Ouvre-le
+            pour continuer.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 320 }}>
-      <label>
-        Email
-        <input
-          type="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
-        />
-      </label>
-      <button type="submit" style={{ padding: 10 }}>Recevoir un lien de connexion</button>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-    </form>
+    <div className="auth">
+      <div className="card auth__card">
+        <h1 className="page-title">Connexion</h1>
+        <p className="muted" style={{ marginBottom: 20 }}>
+          Entre ton email : on t'envoie un lien magique pour te connecter, sans
+          mot de passe.
+        </p>
+        <form onSubmit={handleSubmit} className="stack">
+          <div className="field">
+            <label className="field__label" htmlFor="email">
+              Email
+            </label>
+            <input
+              id="email"
+              className="input"
+              type="email"
+              required
+              autoFocus
+              placeholder="toi@exemple.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <button type="submit" className="btn btn--primary btn--block">
+            Recevoir un lien de connexion
+          </button>
+          {error && <p className="alert alert--error">{error}</p>}
+        </form>
+      </div>
+    </div>
   );
 }
